@@ -1,6 +1,6 @@
 import { PDFDocument } from 'pdf-lib';
 import JSZip from 'jszip';
-import { canvasToBlob, renderPageToCanvas } from './pdf-utils';
+import { renderPageToCanvas } from './pdf-utils';
 
 /**
  * Parses page range string like "1, 3-5, 8" into 0-indexed array of page indices.
@@ -41,7 +41,6 @@ export function parsePageRange(rangeStr: string | undefined | null, totalPages: 
     }
   }
 
-  // If user typed something invalid that yielded no pages, fallback to all pages
   return result.length > 0 ? result.sort((a, b) => a - b) : Array.from({ length: totalPages }, (_, i) => i);
 }
 
@@ -180,158 +179,100 @@ export async function splitPdfByIntervalZip(
   return zipBlob;
 }
 
+export interface PrintItem {
+  pdfProxy: any;
+  title: string;
+  pageIndices: number[]; // 0-indexed
+}
+
+export interface RenderedPrintPage {
+  title: string;
+  pageNumber: number;
+  dataUrl: string;
+}
+
 /**
- * Batch printing helper:
- * Renders pages across one or multiple PDF documents into high-resolution images
- * and triggers an isolated print iframe, ensuring seamless cross-browser printing.
+ * Renders batch or single PDF pages into high-resolution image data URLs
  */
-export async function printPdfDocuments(
-  items: {
-    pdfProxy: any;
-    title: string;
-    pageIndices: number[]; // 0-indexed
-  }[],
+export async function renderPrintPages(
+  items: PrintItem[],
   onProgress?: (percent: number, status: string) => void
-): Promise<void> {
+): Promise<RenderedPrintPage[]> {
   const totalPagesToPrint = items.reduce((acc, item) => acc + item.pageIndices.length, 0);
   if (totalPagesToPrint === 0) {
     throw new Error('没有选定任何可打印的页面');
   }
 
   let completedPages = 0;
-  const imageSources: string[] = [];
+  const renderedPages: RenderedPrintPage[] = [];
 
   for (const item of items) {
     for (const pageIdx of item.pageIndices) {
       completedPages++;
       onProgress?.(
-        Math.round((completedPages / totalPagesToPrint) * 80),
-        `正在渲染高精度打印页面 (${completedPages}/${totalPagesToPrint}): ${item.title} 第 ${pageIdx + 1} 页...`
+        Math.round((completedPages / totalPagesToPrint) * 90),
+        `正在渲染高精度页面 (${completedPages}/${totalPagesToPrint}): ${item.title} 第 ${pageIdx + 1} 页...`
       );
 
       // Render at 2.0 scale for sharp print quality
       const { canvas } = await renderPageToCanvas(item.pdfProxy, pageIdx + 1, 2.0);
       const dataUrl = canvas.toDataURL('image/png');
-      imageSources.push(dataUrl);
+      renderedPages.push({
+        title: item.title,
+        pageNumber: pageIdx + 1,
+        dataUrl,
+      });
     }
   }
 
-  onProgress?.(90, '正在初始化打印输出沙盒窗口...');
+  return renderedPages;
+}
 
-  // Create or reuse hidden iframe
-  let iframe = document.getElementById('pdf-print-sandbox-iframe') as HTMLIFrameElement;
-  if (iframe) {
-    document.body.removeChild(iframe);
+/**
+ * Injects rendered pages into the DOM's dedicated #app-print-container
+ */
+export function mountPagesToPrintContainer(renderedPages: RenderedPrintPage[]) {
+  let container = document.getElementById('app-print-container');
+  if (!container) {
+    container = document.createElement('div');
+    container.id = 'app-print-container';
+    document.body.appendChild(container);
   }
 
-  iframe = document.createElement('iframe');
-  iframe.id = 'pdf-print-sandbox-iframe';
-  iframe.style.position = 'fixed';
-  iframe.style.right = '0';
-  iframe.style.bottom = '0';
-  iframe.style.width = '0';
-  iframe.style.height = '0';
-  iframe.style.border = '0';
-  iframe.style.visibility = 'hidden';
-  document.body.appendChild(iframe);
+  container.innerHTML = renderedPages
+    .map(
+      (p, i) => `
+    <div class="print-page-box" data-page="${i + 1}">
+      <img src="${p.dataUrl}" alt="${p.title} - Page ${p.pageNumber}" />
+    </div>
+  `
+    )
+    .join('');
+}
 
-  const doc = iframe.contentWindow?.document;
-  if (!doc) {
-    throw new Error('无法创建打印窗口环境');
+/**
+ * Clears the print container after print to release memory
+ */
+export function cleanupPrintContainer() {
+  const container = document.getElementById('app-print-container');
+  if (container) {
+    container.innerHTML = '';
   }
+}
 
-  doc.open();
-  doc.write(`
-    <!DOCTYPE html>
-    <html>
-      <head>
-        <meta charset="utf-8" />
-        <title>打印文档</title>
-        <style>
-          @page {
-            size: auto;
-            margin: 0mm;
-          }
-          * {
-            box-sizing: border-box;
-            margin: 0;
-            padding: 0;
-          }
-          html, body {
-            width: 100%;
-            height: 100%;
-            background: #ffffff;
-          }
-          .print-page-wrapper {
-            page-break-after: always;
-            break-after: page;
-            page-break-inside: avoid;
-            break-inside: avoid;
-            width: 100%;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            padding: 0;
-            margin: 0;
-          }
-          .print-page-img {
-            max-width: 100%;
-            width: 100%;
-            height: auto;
-            display: block;
-          }
-          @media screen {
-            body { padding: 20px; }
-            .print-page-wrapper { margin-bottom: 20px; box-shadow: 0 0 10px rgba(0,0,0,0.1); }
-          }
-        </style>
-      </head>
-      <body>
-        ${imageSources.map((src, i) => `
-          <div class="print-page-wrapper">
-            <img class="print-page-img" src="${src}" alt="Page ${i + 1}" />
-          </div>
-        `).join('')}
-      </body>
-    </html>
-  `);
-  doc.close();
-
-  onProgress?.(100, '调起打印机对话框...');
-
-  // Wait for all images inside iframe to load before printing
-  await new Promise<void>((resolve) => {
-    const images = doc.images;
-    if (images.length === 0) {
-      resolve();
-      return;
-    }
-
-    let loaded = 0;
-    const checkAll = () => {
-      loaded++;
-      if (loaded >= images.length) {
-        resolve();
-      }
+/**
+ * Triggers browser native print dialog safely.
+ * Returns true if window.print() was called without sandbox exception, false otherwise.
+ */
+export function safeTriggerWindowPrint(): { ok: boolean; error?: string } {
+  try {
+    window.print();
+    return { ok: true };
+  } catch (err: any) {
+    console.warn('window.print() 被浏览器安全策略或沙盒拦截:', err);
+    return {
+      ok: false,
+      error: err?.message || '当前窗口环境拦截了打印弹窗（缺少 allow-modals 权限）',
     };
-
-    for (let i = 0; i < images.length; i++) {
-      if (images[i].complete) {
-        loaded++;
-      } else {
-        images[i].onload = checkAll;
-        images[i].onerror = checkAll;
-      }
-    }
-
-    if (loaded >= images.length) {
-      resolve();
-    }
-  });
-
-  // Small delay to ensure render layout is settled
-  await new Promise((r) => setTimeout(r, 300));
-
-  iframe.contentWindow?.focus();
-  iframe.contentWindow?.print();
+  }
 }

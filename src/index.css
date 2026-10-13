@@ -61,3 +61,57 @@ body {
 .custom-scrollbar::-webkit-scrollbar-thumb:hover {
   background-color: var(--color-text-muted);
 }
+
+/* Dedicated Print Layout Styles */
+@media print {
+  /* Hide the entire app UI */
+  body > *:not(#app-print-container) {
+    display: none !important;
+  }
+
+  /* Show dedicated print container */
+  #app-print-container {
+    display: block !important;
+    position: absolute !important;
+    left: 0 !important;
+    top: 0 !important;
+    width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    background: #ffffff !important;
+    z-index: 9999999 !important;
+  }
+
+  .print-page-box {
+    page-break-after: always !important;
+    break-after: page !important;
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    display: flex !important;
+    justify-content: center !important;
+    align-items: center !important;
+  }
+
+  .print-page-box img {
+    max-width: 100% !important;
+    width: 100% !important;
+    height: auto !important;
+    display: block !important;
+    margin: 0 auto !important;
+  }
+
+  @page {
+    size: auto;
+    margin: 0mm;
+  }
+}
+
+@media screen {
+  #app-print-container {
+    display: none !important;
+  }
+}
