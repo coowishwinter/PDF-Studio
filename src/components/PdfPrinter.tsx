@@ -1,32 +1,8 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { FileItem } from '../App';
-import {
-  parsePageRange,
-  mergePdfs,
-  renderPrintPages,
-  mountPagesToPrintContainer,
-  cleanupPrintContainer,
-  safeTriggerWindowPrint,
-  RenderedPrintPage,
-  PrintItem,
-} from '../lib/pdf-ops';
+import { printPdfDocuments, parsePageRange, mergePdfs } from '../lib/pdf-ops';
 import { saveAs } from 'file-saver';
-import {
-  Printer,
-  CheckSquare,
-  Square,
-  ArrowUp,
-  ArrowDown,
-  Download,
-  Loader2,
-  CheckCircle,
-  FileText,
-  Settings2,
-  X,
-  ExternalLink,
-  AlertTriangle,
-  ZoomIn,
-} from 'lucide-react';
+import { Printer, CheckSquare, Square, ArrowUp, ArrowDown, Download, Loader2, CheckCircle, FileText, Settings2, Sliders } from 'lucide-react';
 
 interface PrintFileConfig {
   id: string;
@@ -60,19 +36,15 @@ export default function PdfPrinter({
     }))
   );
 
-  const [isProcessing, setIsProcessing] = useState(false);
+  const [isPrinting, setIsPrinting] = useState(false);
   const [progress, setProgress] = useState(0);
   const [status, setStatus] = useState('');
-
-  // Modal / Preview state
-  const [previewOpen, setPreviewOpen] = useState(false);
-  const [renderedPages, setRenderedPages] = useState<RenderedPrintPage[]>([]);
-  const [printBlockedNotice, setPrintBlockedNotice] = useState<string | null>(null);
 
   // Active current item
   const targetSingle = currentFileItem || files[0];
   const singleTotalPages = targetSingle?.numPages || 1;
 
+  // Sync batch list if files change
   const toggleSelectAll = (checked: boolean) => {
     setBatchList(prev => prev.map(item => ({ ...item, selected: checked })));
   };
@@ -106,11 +78,11 @@ export default function PdfPrinter({
     return acc + pageIndices.length;
   }, 0);
 
-  // Core Print Routine
-  const handleStartPrint = async () => {
-    if (isProcessing) return;
+  // Trigger browser print
+  const handlePrint = async () => {
+    if (isPrinting) return;
 
-    const itemsToPrint: PrintItem[] = [];
+    const itemsToPrint: { pdfProxy: any; title: string; pageIndices: number[] }[] = [];
 
     if (printMode === 'current') {
       if (!targetSingle?.pdfProxy) {
@@ -156,70 +128,32 @@ export default function PdfPrinter({
       return;
     }
 
-    setIsProcessing(true);
+    setIsPrinting(true);
     setProgress(0);
-    setStatus('正在初始化打印页面数据...');
-    setPrintBlockedNotice(null);
+    setStatus('正在准备打印页面渲染...');
 
     try {
-      // 1. Render all pages to high-resolution data URLs
-      const pages = await renderPrintPages(itemsToPrint, (p, s) => {
+      await printPdfDocuments(itemsToPrint, (p, s) => {
         setProgress(p);
         setStatus(s);
       });
-
-      setRenderedPages(pages);
-      setProgress(95);
-      setStatus('正在挂载页面至打印引擎...');
-
-      // 2. Mount to DOM print container
-      mountPagesToPrintContainer(pages);
-
-      // Open print preview modal for immediate feedback
-      setPreviewOpen(true);
-      setProgress(100);
-
-      // 3. Trigger native browser print
-      const result = safeTriggerWindowPrint();
-      if (!result.ok) {
-        setPrintBlockedNotice(
-          '当前预览环境拦截了系统打印对话框（沙盒限制）。在独立窗口或实际部署环境 (http://localhost:8080) 中可直接呼出；您也可以直接点击下方【一键下载打印合订本 PDF】使用本地系统打印。'
-        );
-        setStatus('检测到浏览器拦截了弹窗，已为您备好一键打印版 PDF！');
-      } else {
-        setStatus('已成功唤出浏览器打印对话框！');
-      }
+      setStatus('打印请求已成功调起！');
     } catch (err: any) {
       console.error(err);
-      setStatus(`打印排版出错: ${err?.message || '未知错误'}`);
+      setStatus(`打印失败: ${err?.message || '未知错误'}`);
     } finally {
-      setIsProcessing(false);
+      setIsPrinting(false);
+      setTimeout(() => {
+        if (status.includes('成功')) setStatus('');
+      }, 5000);
     }
-  };
-
-  // Re-trigger window.print from modal
-  const handleRetryPrint = () => {
-    if (renderedPages.length === 0) return;
-    mountPagesToPrintContainer(renderedPages);
-    const result = safeTriggerWindowPrint();
-    if (!result.ok) {
-      setPrintBlockedNotice(
-        '当前沙盒环境拦截了直接弹窗，请点击右侧【下载打印版 PDF】在本地打开直接打印。'
-      );
-    }
-  };
-
-  // Close preview modal
-  const handleClosePreview = () => {
-    setPreviewOpen(false);
-    cleanupPrintContainer();
   };
 
   // Export as Merged Print PDF
   const handleExportPrintPdf = async () => {
-    if (isProcessing) return;
+    if (isPrinting) return;
 
-    setIsProcessing(true);
+    setIsPrinting(true);
     setProgress(0);
     setStatus('正在合并生成打印专用 PDF...');
 
@@ -235,7 +169,7 @@ export default function PdfPrinter({
       } else {
         if (selectedBatchItems.length === 0) {
           alert('请至少勾选 1 个文档');
-          setIsProcessing(false);
+          setIsPrinting(false);
           return;
         }
 
@@ -255,7 +189,7 @@ export default function PdfPrinter({
       console.error(err);
       setStatus('生成打印版 PDF 失败');
     } finally {
-      setIsProcessing(false);
+      setIsPrinting(false);
       setTimeout(() => {
         if (status.includes('已生成')) setStatus('');
       }, 5000);
@@ -290,7 +224,7 @@ export default function PdfPrinter({
             </div>
           </div>
           <p className="text-xs text-(--color-text-muted) leading-relaxed">
-            支持一键调起浏览器物理打印机对话框，或将多份文档批量编排导出为统一的高清打印版 PDF。所有渲染与排版工作完全在本地浏览器沙盒执行，安全私密。
+            支持一键调起浏览器物理打印机对话框，或将多份文档批量编排导出为统一的打印版 PDF。所有渲染与排版工作均在本地浏览器执行。
           </p>
         </div>
 
@@ -472,18 +406,18 @@ export default function PdfPrinter({
         <div className="bg-(--color-panel) p-6 rounded-xl border border-(--color-border-subtle) shadow-sm space-y-4">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
             <button
-              onClick={handleStartPrint}
-              disabled={isProcessing || (printMode === 'batch' && selectedBatchItems.length === 0)}
+              onClick={handlePrint}
+              disabled={isPrinting || (printMode === 'batch' && selectedBatchItems.length === 0)}
               className="w-full relative overflow-hidden flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white p-3.5 rounded-lg font-bold text-xs transition-colors disabled:cursor-not-allowed cursor-pointer shadow-md"
             >
-              {isProcessing && (
+              {isPrinting && (
                 <div
                   className="absolute left-0 top-0 bottom-0 bg-blue-500 opacity-50 z-0 transition-all duration-300"
                   style={{ width: `${progress}%` }}
                 />
               )}
               <span className="relative z-10 flex items-center gap-2">
-                {isProcessing ? (
+                {isPrinting ? (
                   <>
                     <Loader2 className="w-4 h-4 animate-spin" />
                     正在渲染打印队列... {progress}%
@@ -499,7 +433,7 @@ export default function PdfPrinter({
 
             <button
               onClick={handleExportPrintPdf}
-              disabled={isProcessing || (printMode === 'batch' && selectedBatchItems.length === 0)}
+              disabled={isPrinting || (printMode === 'batch' && selectedBatchItems.length === 0)}
               className="w-full flex items-center justify-center gap-2 bg-slate-700 hover:bg-slate-800 dark:bg-slate-800 dark:hover:bg-slate-700 text-white p-3.5 rounded-lg font-bold text-xs transition-colors disabled:cursor-not-allowed cursor-pointer shadow-md"
             >
               <Download className="w-4 h-4" />
@@ -517,103 +451,11 @@ export default function PdfPrinter({
           <div className="bg-blue-50/50 dark:bg-blue-950/20 text-blue-900 dark:text-blue-200 p-3.5 rounded-lg text-xs border border-blue-200/50 dark:border-blue-900/50 flex items-start gap-2 leading-relaxed">
             <Settings2 className="w-4 h-4 shrink-0 text-blue-500 mt-0.5" />
             <div>
-              <strong>双重打印保障：</strong>
-              <div className="mt-1 space-y-1 text-[11px] opacity-90">
-                <p>1. <b>直接调起打印机</b>：系统在本地将所有选定页面渲染为高清排版，并呼出浏览器的原生打印面板（可在面板中选择物理打印机、单双面打印等）。</p>
-                <p>2. <b>合订本 PDF 导出</b>：如需带去外部打印店或在离线电脑上打印，可点击“合并导出批量打印合订本”，生成单份标准 PDF 文件。</p>
-              </div>
+              <strong>批量打印贴士：</strong> 点击“立即批量打印”后，系统将在本地沙盒中把所有被选中文档的所有选定页面按照顺序合成为高清打印队列，并自动呼出浏览器的标准打印窗口。您可以在弹出的打印面板中自由选择双面打印（长边翻转/短边翻转）、彩色或黑白以及缩放比例。
             </div>
           </div>
         </div>
       </div>
-
-      {/* Interactive Print Preview & Management Modal */}
-      {previewOpen && (
-        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-(--color-panel) w-full max-w-4xl max-h-[90vh] rounded-2xl shadow-2xl border border-(--color-border-subtle) flex flex-col overflow-hidden">
-            {/* Modal Header */}
-            <div className="p-4 border-b border-(--color-border-subtle) flex items-center justify-between bg-(--color-panel) shrink-0">
-              <div className="flex items-center gap-2">
-                <Printer className="w-5 h-5 text-blue-600" />
-                <h3 className="font-bold text-sm text-(--color-text-main)">
-                  批量打印页面就绪控制台 (已准备 {renderedPages.length} 页)
-                </h3>
-              </div>
-              <button
-                onClick={handleClosePreview}
-                className="p-1.5 rounded-lg hover:bg-(--color-bg-hover) text-(--color-text-muted) hover:text-(--color-text-main) cursor-pointer"
-                title="关闭"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            {/* Sandbox Notice Banner if blocked */}
-            {printBlockedNotice && (
-              <div className="p-3 bg-amber-50 dark:bg-amber-950/40 border-b border-amber-200 dark:border-amber-850 flex items-start gap-2 text-amber-900 dark:text-amber-200 text-xs shrink-0">
-                <AlertTriangle className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
-                <div className="leading-relaxed">
-                  {printBlockedNotice}
-                </div>
-              </div>
-            )}
-
-            {/* Scrollable Gallery Preview */}
-            <div className="flex-1 overflow-y-auto p-4 bg-gray-100 dark:bg-slate-900/60 custom-scrollbar">
-              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
-                {renderedPages.map((page, idx) => (
-                  <div
-                    key={idx}
-                    className="bg-white dark:bg-slate-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 overflow-hidden flex flex-col"
-                  >
-                    <div className="p-2 border-b border-gray-100 dark:border-gray-700/50 flex items-center justify-between text-[10px] text-gray-500 dark:text-gray-400">
-                      <span className="font-bold text-blue-600 dark:text-blue-400">第 {idx + 1} 页</span>
-                      <span className="truncate max-w-[120px]">{page.title}</span>
-                    </div>
-                    <div className="p-2 flex-1 flex items-center justify-center bg-gray-50 dark:bg-slate-900">
-                      <img
-                        src={page.dataUrl}
-                        alt={`Page ${idx + 1}`}
-                        className="max-h-48 w-auto object-contain shadow-xs border border-gray-100 dark:border-gray-800"
-                      />
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* Modal Footer Controls */}
-            <div className="p-4 border-t border-(--color-border-subtle) bg-(--color-panel) flex flex-col sm:flex-row items-center justify-between gap-3 shrink-0">
-              <div className="text-xs text-(--color-text-muted)">
-                当前队列：共计 <b>{renderedPages.length}</b> 个页面准备就绪
-              </div>
-
-              <div className="flex items-center gap-2.5 w-full sm:w-auto justify-end">
-                <button
-                  onClick={handleRetryPrint}
-                  className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold cursor-pointer transition-colors shadow-sm"
-                >
-                  <Printer className="w-3.5 h-3.5" /> 调起系统打印机窗口
-                </button>
-
-                <button
-                  onClick={handleExportPrintPdf}
-                  className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-slate-700 hover:bg-slate-800 dark:bg-slate-800 dark:hover:bg-slate-700 text-white text-xs font-bold cursor-pointer transition-colors shadow-sm"
-                >
-                  <Download className="w-3.5 h-3.5" /> 一键下载打印版 PDF
-                </button>
-
-                <button
-                  onClick={handleClosePreview}
-                  className="px-3.5 py-2 rounded-lg border border-(--color-border-subtle) hover:bg-(--color-bg-hover) text-xs font-semibold text-(--color-text-main) cursor-pointer"
-                >
-                  关闭
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
