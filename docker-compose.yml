@@ -1,0 +1,13 @@
+version: '3.8'
+
+services:
+  pdf-studio:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: pdf-studio-app
+    ports:
+      - "8080:80"
+    restart: always
+    environment:
+      - NODE_ENV=production

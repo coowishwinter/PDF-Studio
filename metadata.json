@@ -1,0 +1,6 @@
+{
+  "name": "PDF Studio",
+  "description": "A privacy-first, client-side PDF tool to view, merge, split, print (single and batch), extract text, and batch convert PDFs to images in high-definition formats.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
