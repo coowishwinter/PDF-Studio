@@ -163,7 +163,9 @@ export default function FeedbackWidget() {
                   value={contact}
                   onChange={(e) => setContact(e.target.value)}
                   maxLength={120}
-                  placeholder="联系方式（选填，方便我们回复你）"
+                  autoComplete="email"
+                  placeholder="邮箱（选填，方便我们回复你）"
+                  type="email"
                   className="mt-1 w-full rounded-lg border border-(--color-border-subtle) bg-(--color-canvas) px-3 py-2 text-xs outline-none focus:border-blue-500 placeholder:text-(--color-text-muted)/70"
                 />
 
