@@ -4,6 +4,7 @@ import { loadPdf } from './lib/pdf-utils';
 import MainArea from './components/MainArea';
 import PdfMerger from './components/PdfMerger';
 import PdfPrinter from './components/PdfPrinter';
+import FeedbackWidget from './components/FeedbackWidget';
 
 const LOGO_URL = ((import.meta as any).env?.BASE_URL || '/') + 'logo.png';
 
@@ -247,8 +248,9 @@ export default function App() {
           )}
         </div>
 
-        {/* Private security footer badge */}
-        <div className="p-3 bg-(--color-canvas) border-t border-(--color-border-subtle) text-[10px] text-(--color-text-muted) flex flex-col items-center gap-1">
+        {/* Feedback + Private security footer */}
+        <div className="p-3 bg-(--color-canvas) border-t border-(--color-border-subtle) text-[10px] text-(--color-text-muted) flex flex-col items-center gap-1.5">
+          <FeedbackWidget />
           <div className="flex items-center gap-1.5 font-semibold text-emerald-600 dark:text-emerald-400">
             <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse shrink-0"></span>
             永久免费 · 100% 本地处理
