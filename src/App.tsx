@@ -260,7 +260,7 @@ export default function App() {
               <FileText className="w-14 h-14 mb-3 text-blue-500 opacity-70 animate-pulse" />
               <p className="text-base font-bold text-(--color-text-main)">欢迎使用 PDF 全能处理大师</p>
               <p className="text-xs mt-2 text-(--color-text-muted) leading-relaxed">
-                高私密纯本地工具：支持<b>在线预览</b>、<b>PDF拆分与提取</b>、<b>多文档合并</b>、<b>高清打印（支持批量打印）</b>、<b>批量转图片</b>以及<b>文字提取</b>。
+                高私密纯本地工具：支持<b>在线预览</b>、<b>PDF 编辑（文字/图片签名/高亮/涂白/水印/页码）</b>、<b>PDF拆分与提取</b>、<b>多文档合并</b>、<b>高清打印（支持批量打印）</b>、<b>批量转图片</b>以及<b>文字提取</b>。
               </p>
 
               <div className="grid grid-cols-2 gap-2 mt-5 w-full">

@@ -5,9 +5,10 @@ import PdfConverter from './PdfConverter';
 import PdfTextExtractor from './PdfTextExtractor';
 import PdfSplitter from './PdfSplitter';
 import PdfPrinter from './PdfPrinter';
-import { Eye, Scissors, Image as ImageIcon, Printer, Type, Loader2 } from 'lucide-react';
+import PdfEditor from './PdfEditor';
+import { Eye, Scissors, Image as ImageIcon, Printer, Type, Loader2, Pencil } from 'lucide-react';
 
-export type MainTab = 'view' | 'split' | 'convert' | 'print' | 'text';
+export type MainTab = 'view' | 'edit' | 'split' | 'convert' | 'print' | 'text';
 
 export default function MainArea({
   fileItem,
@@ -38,6 +39,13 @@ export default function MainArea({
           className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-md transition duration-150 text-xs font-semibold cursor-pointer shrink-0 ${activeTab === 'view' ? 'bg-(--color-canvas) shadow-sm text-blue-600 dark:text-blue-400 font-bold border border-(--color-border-subtle)' : 'text-(--color-text-muted) hover:bg-(--color-bg-hover) hover:text-(--color-text-main)'}`}
         >
           <Eye className="w-4 h-4 text-blue-500" /> 在线预览
+        </button>
+
+        <button
+          onClick={() => setActiveTab('edit')}
+          className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-md transition duration-150 text-xs font-semibold cursor-pointer shrink-0 ${activeTab === 'edit' ? 'bg-(--color-canvas) shadow-sm text-blue-600 dark:text-blue-400 font-bold border border-(--color-border-subtle)' : 'text-(--color-text-muted) hover:bg-(--color-bg-hover) hover:text-(--color-text-main)'}`}
+        >
+          <Pencil className="w-4 h-4 text-orange-500" /> PDF 编辑
         </button>
 
         <button
@@ -72,6 +80,7 @@ export default function MainArea({
       {/* Content Area */}
       <div className="flex-1 overflow-hidden relative">
         {activeTab === 'view' && <PdfViewer fileItem={fileItem} />}
+        {activeTab === 'edit' && <PdfEditor fileItem={fileItem} />}
         {activeTab === 'split' && <PdfSplitter fileItem={fileItem} />}
         {activeTab === 'print' && <PdfPrinter files={files} currentFileItem={fileItem} />}
         {activeTab === 'convert' && <PdfConverter fileItem={fileItem} />}

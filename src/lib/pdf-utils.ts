@@ -8,9 +8,16 @@ export async function loadPdf(file: File) {
   return pdf;
 }
 
-export async function renderPageToCanvas(pdf: any, pageNumber: number, scale: number = 2.0) {
+export async function renderPageToCanvas(
+  pdf: any,
+  pageNumber: number,
+  scale: number = 2.0,
+  rotation?: number
+) {
   const page = await pdf.getPage(pageNumber);
-  const viewport = page.getViewport({ scale });
+  const viewport = rotation === undefined
+    ? page.getViewport({ scale })
+    : page.getViewport({ scale, rotation });
   
   const canvas = document.createElement('canvas');
   canvas.width = viewport.width;
