@@ -32,7 +32,7 @@ type Tool = 'select' | OverlayType;
 type PendingImage = { dataUrl: string; mime: string; width: number; height: number };
 
 const TOOL_HINTS: Record<Tool, string> = {
-  select: '点击选中元素，拖动移动；拖动右下角手柄可调整大小。',
+  select: '点击选中元素拖动移动；图片可点左上角剪刀或双击裁剪，顶部圆点旋转。',
   text: '在页面上点击即可插入文字，输入完成后点击空白处确认。',
   image: '已选择图片，点击页面即可放置。',
   highlight: '在页面上拖拽绘制高亮区域（不拖拽则生成默认大小）。',
@@ -255,7 +255,7 @@ function InlineTextEditor({
 
 /* --------------------------------- 裁剪弹窗 -------------------------------- */
 
-type CropMode = 'move' | 'nw' | 'ne' | 'sw' | 'se';
+type CropMode = 'move' | 'nw' | 'ne' | 'sw' | 'se' | 'n' | 's' | 'e' | 'w';
 
 function CropDialog({
   overlay,
@@ -364,15 +364,41 @@ function CropDialog({
   };
 
   const handles: { mode: CropMode; style: React.CSSProperties }[] = [
-    { mode: 'nw', style: { left: -6, top: -6, cursor: 'nwse-resize' } },
-    { mode: 'ne', style: { right: -6, top: -6, cursor: 'nesw-resize' } },
-    { mode: 'sw', style: { left: -6, bottom: -6, cursor: 'nesw-resize' } },
-    { mode: 'se', style: { right: -6, bottom: -6, cursor: 'nwse-resize' } },
+    { mode: 'nw', style: { left: -7, top: -7, cursor: 'nwse-resize' } },
+    { mode: 'ne', style: { right: -7, top: -7, cursor: 'nesw-resize' } },
+    { mode: 'sw', style: { left: -7, bottom: -7, cursor: 'nesw-resize' } },
+    { mode: 'se', style: { right: -7, bottom: -7, cursor: 'nwse-resize' } },
+    { mode: 'n', style: { left: '50%', top: -7, transform: 'translateX(-50%)', cursor: 'ns-resize' } },
+    { mode: 's', style: { left: '50%', bottom: -7, transform: 'translateX(-50%)', cursor: 'ns-resize' } },
+    { mode: 'w', style: { top: '50%', left: -7, transform: 'translateY(-50%)', cursor: 'ew-resize' } },
+    { mode: 'e', style: { top: '50%', right: -7, transform: 'translateY(-50%)', cursor: 'ew-resize' } },
   ];
+
+  const updateEdge = (edge: 'left' | 'top' | 'right' | 'bottom', percent: number) => {
+    const value = clamp(percent, 0, 100) / 100;
+    const MIN = 0.04;
+    const right = crop.x + crop.w;
+    const bottom = crop.y + crop.h;
+    if (edge === 'left') {
+      const x = Math.min(value, right - MIN);
+      setCrop({ ...crop, x, w: right - x });
+      return;
+    }
+    if (edge === 'top') {
+      const y = Math.min(value, bottom - MIN);
+      setCrop({ ...crop, y, h: bottom - y });
+      return;
+    }
+    if (edge === 'right') {
+      setCrop({ ...crop, w: Math.max(value, crop.x + MIN) - crop.x });
+      return;
+    }
+    setCrop({ ...crop, h: Math.max(value, crop.y + MIN) - crop.y });
+  };
 
   return (
     <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-6">
-      <div className="bg-(--color-panel) border border-(--color-border-subtle) rounded-xl shadow-2xl p-4 max-w-[95vw]">
+      <div className="bg-(--color-panel) border border-(--color-border-subtle) rounded-xl shadow-2xl p-4 max-w-[95vw] max-h-[92vh] overflow-y-auto custom-scrollbar">
         <div className="flex items-center justify-between mb-3">
           <h3 className="text-sm font-bold text-(--color-text-main) flex items-center gap-2">
             <Crop className="w-4 h-4 text-blue-500" /> 剪裁图片
@@ -424,9 +450,40 @@ function CropDialog({
           </div>
         </div>
 
-        <div className="flex items-center justify-between gap-4 mt-4">
+        <div className="grid grid-cols-4 gap-2 mt-3">
+          {([
+            ['left', '左 %'],
+            ['top', '上 %'],
+            ['right', '右 %'],
+            ['bottom', '下 %'],
+          ] as const).map(([edge, label]) => {
+            const current =
+              edge === 'left'
+                ? crop.x
+                : edge === 'top'
+                  ? crop.y
+                  : edge === 'right'
+                    ? crop.x + crop.w
+                    : crop.y + crop.h;
+            return (
+              <label key={edge} className="flex flex-col gap-1 text-[10px] text-(--color-text-muted)">
+                {label}
+                <input
+                  type="number"
+                  min={0}
+                  max={100}
+                  value={Math.round(current * 100)}
+                  onChange={event => updateEdge(edge, parseInt(event.target.value, 10) || 0)}
+                  className="w-full p-1.5 text-xs text-center rounded-md border border-(--color-border-subtle) bg-(--color-canvas) text-(--color-text-main) outline-none focus:border-blue-500"
+                />
+              </label>
+            );
+          })}
+        </div>
+
+        <div className="flex items-center justify-between gap-4 mt-3">
           <span className="text-[11px] text-(--color-text-muted)">
-            拖动框内移动，拖动四角调整裁剪范围
+            拖动框内移动，拖动四角或四边调整裁剪范围，也可直接输入百分比
           </span>
           <div className="flex items-center gap-2">
             <button
@@ -475,7 +532,7 @@ function PageCard({
   isFirst, isLast,
   onActivate, onSelectOverlay, onBeginEdit, onEndEdit, onAddOverlay,
   onUpdateOverlay, onPatchText, onGestureStart, onPageOps, onToolChange,
-  onConsumePendingImage,
+  onConsumePendingImage, onRequestCrop, onRemoveOverlay,
 }: {
   key?: React.Key;
   page: EditPage;
@@ -505,6 +562,8 @@ function PageCard({
   onPageOps: (action: 'rotate-cw' | 'rotate-ccw' | 'delete' | 'up' | 'down' | 'insert') => void;
   onToolChange: (tool: Tool) => void;
   onConsumePendingImage: () => void;
+  onRequestCrop: (id: string) => void;
+  onRemoveOverlay: (id: string) => void;
 }) {
   const dims = displaySize(page);
   const pageWidthPx = dims.width * zoom;
@@ -849,9 +908,15 @@ function PageCard({
               style={boxStyle}
               onPointerDown={event => handleOverlayPointerDown(event, overlay)}
               onDoubleClick={event => {
-                if (overlay.type !== 'text') return;
-                event.stopPropagation();
-                onBeginEdit(overlay.id);
+                if (overlay.type === 'text') {
+                  event.stopPropagation();
+                  onBeginEdit(overlay.id);
+                  return;
+                }
+                if (overlay.type === 'image') {
+                  event.stopPropagation();
+                  onRequestCrop(overlay.id);
+                }
               }}
               className={clsx(
                 'group',
@@ -897,6 +962,34 @@ function PageCard({
                         }
                   }
                 />
+              )}
+
+              {isSelected && tool === 'select' && !isEditing && overlay.type === 'image' && (
+                <div
+                  className="absolute -left-2 -top-2 flex items-center gap-0.5"
+                  onPointerDown={event => event.stopPropagation()}
+                >
+                  <button
+                    onClick={event => {
+                      event.stopPropagation();
+                      onRequestCrop(overlay.id);
+                    }}
+                    className="w-6 h-6 rounded-full bg-blue-600 text-white flex items-center justify-center shadow"
+                    title="剪裁图片"
+                  >
+                    <Crop className="w-3 h-3" />
+                  </button>
+                  <button
+                    onClick={event => {
+                      event.stopPropagation();
+                      onRemoveOverlay(overlay.id);
+                    }}
+                    className="w-6 h-6 rounded-full bg-white border border-(--color-border-subtle) text-red-500 flex items-center justify-center shadow"
+                    title="删除图片"
+                  >
+                    <Trash2 className="w-3 h-3" />
+                  </button>
+                </div>
               )}
 
               {isSelected && tool === 'select' && !isEditing && overlay.type === 'image' && (
@@ -1547,6 +1640,8 @@ export default function PdfEditor({ fileItem }: { fileItem: FileItem }) {
                 onPageOps={action => handlePageOps(page.uid, action)}
                 onToolChange={setTool}
                 onConsumePendingImage={() => setPendingImage(null)}
+                onRequestCrop={setCropTargetId}
+                onRemoveOverlay={removeOverlay}
               />
             ))}
           </div>
@@ -1652,7 +1747,7 @@ export default function PdfEditor({ fileItem }: { fileItem: FileItem }) {
                   </div>
                 )}
 
-                {selectedOverlay.type !== 'text' && selectedOverlay.type !== 'rect' && (
+                {(selectedOverlay.type === 'highlight' || selectedOverlay.type === 'whiteout') && (
                   <div className="flex items-center gap-2">
                     <label className="text-[11px] text-(--color-text-muted) w-12 shrink-0">颜色</label>
                     <input
