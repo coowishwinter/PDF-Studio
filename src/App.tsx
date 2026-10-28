@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { FileUp, Moon, Sun, Trash2, FileText, ShieldAlert, Combine, Printer, Layers, Plus } from 'lucide-react';
+import { FileUp, Moon, Sun, Trash2, FileText, ShieldAlert, ShieldCheck, Combine, Printer, Layers, Plus } from 'lucide-react';
 import { loadPdf } from './lib/pdf-utils';
 import MainArea from './components/MainArea';
 import PdfMerger from './components/PdfMerger';
@@ -108,10 +108,24 @@ export default function App() {
       <div className="w-80 border-r border-(--color-border-subtle) bg-(--color-panel) flex flex-col shrink-0 transition-colors duration-200">
         {/* Title logo section */}
         <div className="p-4 border-b border-(--color-border-subtle) flex items-center justify-between">
-          <h1 className="text-base font-bold flex items-center gap-2 text-(--color-text-main)">
-            <FileText className="w-5 h-5 text-blue-600 dark:text-blue-400" />
-            PDF 全能处理大师
-          </h1>
+          <div className="flex items-center gap-2.5 min-w-0">
+            <img
+              src="/logo.png"
+              alt="简页 logo"
+              className="w-8 h-8 rounded-lg object-contain shrink-0"
+            />
+            <div className="min-w-0">
+              <div className="flex items-center gap-1.5">
+                <h1 className="text-base font-bold text-(--color-text-main) truncate">简页</h1>
+                <span className="text-[9px] font-semibold px-1.5 py-0.5 rounded-full bg-emerald-100 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300 shrink-0">
+                  免费
+                </span>
+              </div>
+              <p className="text-[10px] text-(--color-text-muted) truncate">
+                PDF 编辑器 · 纯本地隐私
+              </p>
+            </div>
+          </div>
           <button
             onClick={() => setDarkMode(!darkMode)}
             className="p-1.5 rounded-md hover:bg-(--color-bg-hover) text-(--color-text-muted) hover:text-(--color-text-main) transition-colors cursor-pointer"
@@ -232,9 +246,12 @@ export default function App() {
         </div>
 
         {/* Private security footer badge */}
-        <div className="p-3 bg-(--color-canvas) border-t border-(--color-border-subtle) text-[10px] text-(--color-text-muted) flex items-center gap-1.5 justify-center">
-          <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse shrink-0"></span>
-          纯本地沙盒计算：绝对保护文档隐私
+        <div className="p-3 bg-(--color-canvas) border-t border-(--color-border-subtle) text-[10px] text-(--color-text-muted) flex flex-col items-center gap-1">
+          <div className="flex items-center gap-1.5 font-semibold text-emerald-600 dark:text-emerald-400">
+            <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse shrink-0"></span>
+            永久免费 · 100% 本地处理
+          </div>
+          <span className="text-[9px] opacity-75">文件不上传服务器 · 无账号 · 断网可用</span>
         </div>
       </div>
 
@@ -257,13 +274,37 @@ export default function App() {
         ) : (
           <div className="flex-1 flex flex-col items-center justify-center text-(--color-text-muted) p-8">
             <div className="p-6 bg-(--color-panel) border border-(--color-border-subtle) rounded-2xl shadow-xl flex flex-col items-center max-w-md text-center">
-              <FileText className="w-14 h-14 mb-3 text-blue-500 opacity-70 animate-pulse" />
-              <p className="text-base font-bold text-(--color-text-main)">欢迎使用 PDF 全能处理大师</p>
+              <img
+                src="/logo.png"
+                alt="简页"
+                className="w-16 h-16 mb-3 rounded-2xl object-contain shadow-sm"
+              />
+              <div className="flex items-center gap-2">
+                <p className="text-lg font-bold text-(--color-text-main)">简页</p>
+                <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300">
+                  永久免费
+                </span>
+              </div>
+              <p className="text-xs text-(--color-text-muted) mt-0.5">PDF 编辑器</p>
               <p className="text-xs mt-2 text-(--color-text-muted) leading-relaxed">
-                高私密纯本地工具：支持<b>在线预览</b>、<b>PDF 编辑（文字/图片签名/高亮/涂白/水印/页码）</b>、<b>PDF拆分与提取</b>、<b>多文档合并</b>、<b>高清打印（支持批量打印）</b>、<b>批量转图片</b>以及<b>文字提取</b>。
+                免费、纯本地的 PDF 工具：在线预览、可视化编辑、合并、拆分、高清打印、批量转图与文字提取。
               </p>
 
-              <div className="grid grid-cols-2 gap-2 mt-5 w-full">
+              <div className="mt-4 w-full rounded-xl border border-emerald-200 dark:border-emerald-900/60 bg-emerald-50/70 dark:bg-emerald-950/20 p-3 text-left">
+                <div className="flex items-center gap-1.5 text-xs font-bold text-emerald-700 dark:text-emerald-300">
+                  <ShieldCheck className="w-4 h-4" /> 隐私承诺 · 文件不上传
+                </div>
+                <ul className="mt-1.5 space-y-1 text-[11px] leading-relaxed text-emerald-800/80 dark:text-emerald-200/80">
+                  <li>• 打开、编辑、合并、拆分、打印、转图全部在浏览器本地完成</li>
+                  <li>• 无服务器上传、无账号、不收集任何文档内容</li>
+                  <li>• 断网也能用，合同、证件等敏感文件可放心处理</li>
+                </ul>
+              </div>
+              <p className="mt-2.5 text-[11px] font-semibold text-emerald-600 dark:text-emerald-400">
+                所有功能免费使用 · 无会员 · 无次数限制
+              </p>
+
+              <div className="grid grid-cols-2 gap-2 mt-4 w-full">
                 <label className="flex items-center justify-center gap-1.5 p-2.5 rounded-lg border border-blue-500/30 bg-blue-50/50 dark:bg-blue-950/20 text-blue-600 dark:text-blue-400 font-semibold text-xs cursor-pointer hover:bg-blue-50 transition-colors">
                   <Plus className="w-3.5 h-3.5" /> 导入 PDF 开始
                   <input

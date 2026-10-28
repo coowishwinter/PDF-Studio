@@ -1,6 +1,6 @@
 {
-  "name": "PDF Studio",
-  "description": "A privacy-first, client-side PDF tool to view, merge, split, print (single and batch), extract text, and batch convert PDFs to images in high-definition formats.",
+  "name": "简页 · PDF 编辑器",
+  "description": "简页是一款永久免费的纯本地 PDF 编辑器：可视化编辑、合并、拆分、打印、批量转图与文字提取。所有文件只在浏览器本地处理，不上传服务器，断网也能用。",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }
