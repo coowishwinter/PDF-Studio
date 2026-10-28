@@ -1424,6 +1424,37 @@ export default function PdfEditor({ fileItem }: { fileItem: FileItem }) {
     }
   }, [fileItem.pdfProxy, addOverlays]);
 
+  const moveOverlayToPage = useCallback((id: string, targetPageUid: string) => {
+    const currentState = stateRef.current;
+    const overlay = currentState.overlays.find(item => item.id === id);
+    const targetIndex = currentState.pages.findIndex(page => page.uid === targetPageUid);
+    if (!overlay || targetIndex < 0 || overlay.pageUid === targetPageUid) return;
+
+    apply(current => ({
+      ...current,
+      overlays: current.overlays.map(item => {
+        if (item.id !== id) return item;
+        const width = Math.min(item.width, 0.98);
+        const height = Math.min(item.height, 0.98);
+        return {
+          ...item,
+          pageUid: targetPageUid,
+          width,
+          height,
+          x: clamp(item.x, 0, 1 - width),
+          y: clamp(item.y, 0, 1 - height),
+        };
+      }),
+    }));
+
+    setActivePageUid(targetPageUid);
+    setStatus('已移动到第 ' + (targetIndex + 1) + ' 页');
+    window.setTimeout(() => {
+      const element = document.querySelector('[data-page-index="' + targetIndex + '"]');
+      element?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }, 80);
+  }, [apply]);
+
   const endEdit = useCallback(() => {
     const id = editingId;
     setEditingId(null);
@@ -1845,6 +1876,24 @@ export default function PdfEditor({ fileItem }: { fileItem: FileItem }) {
                     删除
                   </button>
                 </div>
+
+                {state.pages.length > 1 && (
+                  <div className="flex items-center gap-2">
+                    <label className="text-[11px] text-(--color-text-muted) w-12 shrink-0">所在页</label>
+                    <select
+                      value={selectedOverlay.pageUid}
+                      onChange={event => moveOverlayToPage(selectedOverlay.id, event.target.value)}
+                      className="flex-1 p-1.5 text-xs rounded-md border border-(--color-border-subtle) bg-(--color-panel) text-(--color-text-main) outline-none focus:border-blue-500 cursor-pointer"
+                      title="移动到其他页面"
+                    >
+                      {state.pages.map((page, index) => (
+                        <option key={page.uid} value={page.uid}>
+                          第 {index + 1} 页
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
 
                 {selectedOverlay.type === 'text' && (
                   <>
