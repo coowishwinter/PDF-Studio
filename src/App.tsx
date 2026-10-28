@@ -5,6 +5,8 @@ import MainArea from './components/MainArea';
 import PdfMerger from './components/PdfMerger';
 import PdfPrinter from './components/PdfPrinter';
 
+const LOGO_URL = ((import.meta as any).env?.BASE_URL || '/') + 'logo.png';
+
 export type FileItem = {
   id: string;
   file: File;
@@ -110,7 +112,7 @@ export default function App() {
         <div className="p-4 border-b border-(--color-border-subtle) flex items-center justify-between">
           <div className="flex items-center gap-2.5 min-w-0">
             <img
-              src="/logo.png"
+              src={LOGO_URL}
               alt="简页 logo"
               className="w-8 h-8 rounded-lg object-contain shrink-0"
             />
@@ -275,7 +277,7 @@ export default function App() {
           <div className="flex-1 flex flex-col items-center justify-center text-(--color-text-muted) p-8">
             <div className="p-6 bg-(--color-panel) border border-(--color-border-subtle) rounded-2xl shadow-xl flex flex-col items-center max-w-md text-center">
               <img
-                src="/logo.png"
+                src={LOGO_URL}
                 alt="简页"
                 className="w-16 h-16 mb-3 rounded-2xl object-contain shadow-sm"
               />
