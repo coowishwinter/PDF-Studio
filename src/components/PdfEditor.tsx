@@ -32,7 +32,7 @@ type Tool = 'select' | OverlayType | 'extract';
 type PendingImage = { dataUrl: string; mime: string; width: number; height: number };
 
 const TOOL_HINTS: Record<Tool, string> = {
-  select: '点击选中元素拖动移动；图片可点左上角剪刀或双击裁剪，顶部圆点旋转。',
+  select: '点击选中元素拖动；直接拖到其他页面即可跨页移动。图片可点左上角剪刀或双击裁剪，顶部圆点旋转。',
   text: '在页面上点击即可插入文字，输入完成后点击空白处确认。',
   image: '已选择图片，点击页面即可放置。',
   highlight: '在页面上拖拽绘制高亮区域（不拖拽则生成默认大小）。',
@@ -517,7 +517,6 @@ function CropDialog({
 
 type DragState =
   | { kind: 'create'; id: string; start: { x: number; y: number } }
-  | { kind: 'move'; id: string; start: { x: number; y: number }; originX: number; originY: number }
   | { kind: 'resize'; id: string; start: { x: number; y: number }; originX: number; originY: number }
   | {
       kind: 'rotate';
@@ -535,7 +534,7 @@ function PageCard({
   isFirst, isLast,
   onActivate, onSelectOverlay, onBeginEdit, onEndEdit, onAddOverlay,
   onUpdateOverlay, onPatchText, onGestureStart, onPageOps, onToolChange,
-  onConsumePendingImage, onRequestCrop, onRemoveOverlay, onExtractImage,
+  onConsumePendingImage, onRequestCrop, onRemoveOverlay, onExtractImage, onBeginMove,
 }: {
   key?: React.Key;
   page: EditPage;
@@ -568,6 +567,12 @@ function PageCard({
   onRequestCrop: (id: string) => void;
   onRemoveOverlay: (id: string) => void;
   onExtractImage: (rect: { x: number; y: number; w: number; h: number }) => void;
+  onBeginMove: (
+    id: string,
+    event: React.PointerEvent,
+    grabX: number,
+    grabY: number
+  ) => void;
 }) {
   const dims = displaySize(page);
   const pageWidthPx = dims.width * zoom;
@@ -741,14 +746,6 @@ function PageCard({
       return;
     }
 
-    if (drag.kind === 'move') {
-      onUpdateOverlay(drag.id, {
-        x: clamp(drag.originX + (point.x - drag.start.x), 0, 1 - overlay.width),
-        y: clamp(drag.originY + (point.y - drag.start.y), 0, 1 - overlay.height),
-      });
-      return;
-    }
-
     const width = clamp(point.x - overlay.x, 0.03, 1 - overlay.x);
     const height = clamp(point.y - overlay.y, 0.02, 1 - overlay.y);
     if (overlay.type === 'text') {
@@ -804,15 +801,10 @@ function PageCard({
       onBeginEdit(overlay.id);
       return;
     }
-    onGestureStart();
-    dragRef.current = {
-      kind: 'move',
-      id: overlay.id,
-      start: pointFromEvent(event),
-      originX: overlay.x,
-      originY: overlay.y,
-    };
-    capture(event);
+    const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
+    const grabX = rect.width ? clamp((event.clientX - rect.left) / rect.width, 0, 1) : 0.5;
+    const grabY = rect.height ? clamp((event.clientY - rect.top) / rect.height, 0, 1) : 0.5;
+    onBeginMove(overlay.id, event, grabX, grabY);
   };
 
   const handleRotatePointerDown = (event: React.PointerEvent, overlay: EditOverlay) => {
@@ -1155,6 +1147,7 @@ export default function PdfEditor({ fileItem }: { fileItem: FileItem }) {
   const [extracting, setExtracting] = useState(false);
 
   const imageInputRef = useRef<HTMLInputElement>(null);
+  const pagesScrollRef = useRef<HTMLDivElement>(null);
   const dpr = Math.min(typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1, 2);
 
   const apply = useCallback((updater: (current: EditorState) => EditorState, record = true) => {
@@ -1454,6 +1447,87 @@ export default function PdfEditor({ fileItem }: { fileItem: FileItem }) {
       element?.scrollIntoView({ behavior: 'smooth', block: 'center' });
     }, 80);
   }, [apply]);
+
+  // 跨页拖动：在 window 上跟踪指针，命中哪一页就切到哪一页
+  const beginOverlayMove = useCallback((
+    id: string,
+    event: React.PointerEvent,
+    grabX: number,
+    grabY: number
+  ) => {
+    event.preventDefault();
+    const overlay = stateRef.current.overlays.find(item => item.id === id);
+    if (!overlay) return;
+
+    pushHistory();
+    const pointerId = event.pointerId;
+
+    const handleMove = (moveEvent: PointerEvent) => {
+      if (moveEvent.pointerId !== pointerId) return;
+      moveEvent.preventDefault();
+
+      const scroll = pagesScrollRef.current;
+      if (scroll) {
+        const scrollRect = scroll.getBoundingClientRect();
+        if (moveEvent.clientY < scrollRect.top + 56) scroll.scrollTop -= 14;
+        else if (moveEvent.clientY > scrollRect.bottom - 56) scroll.scrollTop += 14;
+      }
+
+      const hit = (document.elementFromPoint(moveEvent.clientX, moveEvent.clientY) as HTMLElement | null)
+        ?.closest('[data-page-index]');
+      if (!hit) return;
+      const index = parseInt(hit.getAttribute('data-page-index') || '', 10);
+      const targetPage = stateRef.current.pages[index];
+      if (!targetPage) return;
+
+      const current = stateRef.current.overlays.find(item => item.id === id);
+      if (!current) return;
+      const rect = hit.getBoundingClientRect();
+      if (!rect.width || !rect.height) return;
+
+      const dims = displaySize(targetPage);
+      const overlayWidthPx = current.width * dims.width * zoom;
+      const overlayHeightPx = current.height * dims.height * zoom;
+      const x = clamp(
+        (moveEvent.clientX - rect.left - grabX * overlayWidthPx) / rect.width,
+        0,
+        Math.max(0, 1 - current.width)
+      );
+      const y = clamp(
+        (moveEvent.clientY - rect.top - grabY * overlayHeightPx) / rect.height,
+        0,
+        Math.max(0, 1 - current.height)
+      );
+
+      if (targetPage.uid !== current.pageUid) {
+        apply(state => ({
+          ...state,
+          overlays: state.overlays.map(item =>
+            item.id === id ? { ...item, pageUid: targetPage.uid, x, y } : item
+          ),
+        }), false);
+        setActivePageUid(targetPage.uid);
+      } else {
+        updateOverlay(id, { x, y });
+      }
+    };
+
+    const handleUp = (upEvent: PointerEvent) => {
+      if (upEvent.pointerId !== pointerId) return;
+      window.removeEventListener('pointermove', handleMove);
+      window.removeEventListener('pointerup', handleUp);
+      window.removeEventListener('pointercancel', handleUp);
+      const finalOverlay = stateRef.current.overlays.find(item => item.id === id);
+      if (finalOverlay) {
+        const pageIndex = stateRef.current.pages.findIndex(page => page.uid === finalOverlay.pageUid);
+        if (pageIndex >= 0) setStatus('元素位于第 ' + (pageIndex + 1) + ' 页');
+      }
+    };
+
+    window.addEventListener('pointermove', handleMove, { passive: false });
+    window.addEventListener('pointerup', handleUp);
+    window.addEventListener('pointercancel', handleUp);
+  }, [apply, updateOverlay, pushHistory, zoom]);
 
   const endEdit = useCallback(() => {
     const id = editingId;
@@ -1798,7 +1872,7 @@ export default function PdfEditor({ fileItem }: { fileItem: FileItem }) {
         </div>
 
         {/* 页面列表 */}
-        <div className="flex-1 overflow-auto p-6 bg-(--color-canvas) custom-scrollbar">
+        <div ref={pagesScrollRef} className="flex-1 overflow-auto p-6 bg-(--color-canvas) custom-scrollbar">
           <div className="flex flex-col items-center gap-6">
             {state.pages.map((page, index) => (
               <PageCard
@@ -1836,6 +1910,7 @@ export default function PdfEditor({ fileItem }: { fileItem: FileItem }) {
                 onRequestCrop={setCropTargetId}
                 onRemoveOverlay={removeOverlay}
                 onExtractImage={rect => extractImageFromPage(page, rect)}
+                onBeginMove={beginOverlayMove}
               />
             ))}
           </div>
