@@ -41,6 +41,8 @@ export interface EditOverlay {
   crop?: CropRect;
   naturalWidth?: number;
   naturalHeight?: number;
+  trueCrop?: boolean;      // 裁剪时保持原始内容比例并在页面上“就地裁剪”（用于页面取图）
+  fromPage?: boolean;      // 由“剪裁原图”从页面区域提取的图片
 }
 
 export interface WatermarkConfig {

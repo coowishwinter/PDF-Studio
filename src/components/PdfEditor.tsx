@@ -3,7 +3,7 @@ import clsx from 'clsx';
 import { saveAs } from 'file-saver';
 import { PDFDocument } from 'pdf-lib';
 import {
-  MousePointer2, Type, Image as ImageIcon, Highlighter, Square, Eraser, Crop,
+  MousePointer2, Type, Image as ImageIcon, Highlighter, Square, Eraser, Crop, Scan,
   Undo2, Redo2, Download, ZoomIn, ZoomOut, RotateCw, RotateCcw, Trash2,
   ArrowUp, ArrowDown, Plus, Loader2, Bold, FileText, Layers, CheckCircle, X,
 } from 'lucide-react';
@@ -27,7 +27,7 @@ const normalizeAngle = (value: number) => {
   return angle;
 };
 
-type Tool = 'select' | OverlayType;
+type Tool = 'select' | OverlayType | 'extract';
 
 type PendingImage = { dataUrl: string; mime: string; width: number; height: number };
 
@@ -38,12 +38,14 @@ const TOOL_HINTS: Record<Tool, string> = {
   highlight: '在页面上拖拽绘制高亮区域（不拖拽则生成默认大小）。',
   rect: '在页面上拖拽绘制矩形边框。',
   whiteout: '在页面上拖拽涂抹掉指定区域（白色覆盖）。',
+  extract: '在页面上框选 PDF 中原有的图片/内容，转为可裁剪的图片图层（区域内文字会一并栅格化）。',
 };
 
 const TOOL_META: { key: Tool; label: string; icon: any }[] = [
   { key: 'select', label: '选择', icon: MousePointer2 },
   { key: 'text', label: '文字', icon: Type },
   { key: 'image', label: '图片/签名', icon: ImageIcon },
+  { key: 'extract', label: '剪裁原图', icon: Scan },
   { key: 'highlight', label: '高亮', icon: Highlighter },
   { key: 'rect', label: '矩形', icon: Square },
   { key: 'whiteout', label: '涂白', icon: Eraser },
@@ -524,7 +526,8 @@ type DragState =
       originRotation: number;
       centerX: number;
       centerY: number;
-    };
+    }
+  | { kind: 'extract'; start: { x: number; y: number } };
 
 function PageCard({
   page, index, total, zoom, dpr, pdfProxy, tool, overlays,
@@ -532,7 +535,7 @@ function PageCard({
   isFirst, isLast,
   onActivate, onSelectOverlay, onBeginEdit, onEndEdit, onAddOverlay,
   onUpdateOverlay, onPatchText, onGestureStart, onPageOps, onToolChange,
-  onConsumePendingImage, onRequestCrop, onRemoveOverlay,
+  onConsumePendingImage, onRequestCrop, onRemoveOverlay, onExtractImage,
 }: {
   key?: React.Key;
   page: EditPage;
@@ -564,6 +567,7 @@ function PageCard({
   onConsumePendingImage: () => void;
   onRequestCrop: (id: string) => void;
   onRemoveOverlay: (id: string) => void;
+  onExtractImage: (rect: { x: number; y: number; w: number; h: number }) => void;
 }) {
   const dims = displaySize(page);
   const pageWidthPx = dims.width * zoom;
@@ -571,6 +575,7 @@ function PageCard({
 
   const pageRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<DragState | null>(null);
+  const [extractRect, setExtractRect] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
 
   const pointFromEvent = (event: React.PointerEvent) => {
     const rect = pageRef.current?.getBoundingClientRect();
@@ -604,6 +609,13 @@ function PageCard({
 
     if (tool === 'select') {
       onSelectOverlay(null);
+      return;
+    }
+
+    if (tool === 'extract') {
+      dragRef.current = { kind: 'extract', start: point };
+      setExtractRect({ x: point.x, y: point.y, w: 0, h: 0 });
+      capture(event);
       return;
     }
 
@@ -686,6 +698,17 @@ function PageCard({
     const drag = dragRef.current;
     if (!drag) return;
     const point = pointFromEvent(event);
+
+    if (drag.kind === 'extract') {
+      setExtractRect({
+        x: Math.min(drag.start.x, point.x),
+        y: Math.min(drag.start.y, point.y),
+        w: Math.abs(point.x - drag.start.x),
+        h: Math.abs(point.y - drag.start.y),
+      });
+      return;
+    }
+
     const overlay = overlays.find(item => item.id === drag.id);
     if (!overlay) return;
 
@@ -740,6 +763,19 @@ function PageCard({
     if (!drag) return;
     dragRef.current = null;
     release(event);
+
+    if (drag.kind === 'extract') {
+      const point = pointFromEvent(event);
+      const rect = {
+        x: Math.min(drag.start.x, point.x),
+        y: Math.min(drag.start.y, point.y),
+        w: Math.abs(point.x - drag.start.x),
+        h: Math.abs(point.y - drag.start.y),
+      };
+      setExtractRect(null);
+      if (rect.w > 0.01 && rect.h > 0.01) onExtractImage(rect);
+      return;
+    }
 
     if (drag.kind === 'create') {
       const overlay = overlays.find(item => item.id === drag.id);
@@ -1013,6 +1049,18 @@ function PageCard({
           );
         })}
 
+        {extractRect && extractRect.w > 0.002 && extractRect.h > 0.002 && (
+          <div
+            className="absolute border-2 border-dashed border-blue-500 bg-blue-500/10 pointer-events-none"
+            style={{
+              left: extractRect.x * pageWidthPx,
+              top: extractRect.y * pageHeightPx,
+              width: extractRect.w * pageWidthPx,
+              height: extractRect.h * pageHeightPx,
+            }}
+          />
+        )}
+
         {watermark.enabled && watermark.text.trim() && (
           <div className="absolute inset-0 flex items-center justify-center overflow-hidden pointer-events-none">
             <div
@@ -1104,6 +1152,7 @@ export default function PdfEditor({ fileItem }: { fileItem: FileItem }) {
   const [progress, setProgress] = useState(0);
   const [status, setStatus] = useState('');
   const [imageError, setImageError] = useState('');
+  const [extracting, setExtracting] = useState(false);
 
   const imageInputRef = useRef<HTMLInputElement>(null);
   const dpr = Math.min(typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1, 2);
@@ -1195,6 +1244,10 @@ export default function PdfEditor({ fileItem }: { fileItem: FileItem }) {
     apply(current => ({ ...current, overlays: [...current.overlays, overlay] }));
   }, [apply]);
 
+  const addOverlays = useCallback((items: EditOverlay[]) => {
+    apply(current => ({ ...current, overlays: [...current.overlays, ...items] }));
+  }, [apply]);
+
   const updateOverlay = useCallback((id: string, patch: Partial<EditOverlay>) => {
     apply(current => ({
       ...current,
@@ -1243,8 +1296,19 @@ export default function PdfEditor({ fileItem }: { fileItem: FileItem }) {
       const page = current.pages.find(item => item.uid === overlay.pageUid);
       const next: EditOverlay = { ...overlay, crop };
 
-      // 裁剪后保持裁剪结果的原始宽高比，避免图片被拉伸
-      if (page && overlay.naturalWidth && overlay.naturalHeight) {
+      if (overlay.trueCrop) {
+        // 页面取图：保持原始内容和比例，按裁剪区域“就地”缩放外框
+        const previous = overlay.crop ?? { x: 0, y: 0, w: 1, h: 1 };
+        const fullWidth = overlay.width / Math.max(0.0001, previous.w);
+        const fullHeight = overlay.height / Math.max(0.0001, previous.h);
+        const fullX = overlay.x - previous.x * fullWidth;
+        const fullY = overlay.y - previous.y * fullHeight;
+        next.x = clamp(fullX + crop.x * fullWidth, 0, 1);
+        next.y = clamp(fullY + crop.y * fullHeight, 0, 1);
+        next.width = Math.max(0.003, Math.min(1 - next.x, crop.w * fullWidth));
+        next.height = Math.max(0.003, Math.min(1 - next.y, crop.h * fullHeight));
+      } else if (page && overlay.naturalWidth && overlay.naturalHeight) {
+        // 普通插入图片：外框大小不变，裁剪内容拉伸填满，保持宽高比
         const dims = displaySize(page);
         const widthPts = overlay.width * dims.width;
         const croppedAspect =
@@ -1261,6 +1325,104 @@ export default function PdfEditor({ fileItem }: { fileItem: FileItem }) {
     });
     setCropTargetId(null);
   }, [apply]);
+
+  // 在页面上框选一块区域，渲染成高分辨率图片，并用同色矩形覆盖原区域，形成可继续裁剪/旋转/移动的图片图层
+  const extractImageFromPage = useCallback(async (
+    page: EditPage,
+    rect: { x: number; y: number; w: number; h: number }
+  ) => {
+    if (!fileItem.pdfProxy || page.srcIndex === null) return;
+    setExtracting(true);
+    setStatus('正在从页面取图...');
+    try {
+      const dims = displaySize(page);
+      const scale = Math.min(4, 4000 / Math.max(dims.width, dims.height));
+      const { canvas } = await renderPageToCanvas(
+        fileItem.pdfProxy,
+        page.srcIndex + 1,
+        scale,
+        dims.rotation
+      );
+
+      const clamped = {
+        x: clamp(rect.x, 0, 1),
+        y: clamp(rect.y, 0, 1),
+        w: clamp(rect.w, 0.005, 1 - clamp(rect.x, 0, 1)),
+        h: clamp(rect.h, 0.005, 1 - clamp(rect.y, 0, 1)),
+      };
+      const sx = Math.round(clamped.x * canvas.width);
+      const sy = Math.round(clamped.y * canvas.height);
+      const sw = Math.max(1, Math.round(clamped.w * canvas.width));
+      const sh = Math.max(1, Math.round(clamped.h * canvas.height));
+
+      const cropped = document.createElement('canvas');
+      cropped.width = sw;
+      cropped.height = sh;
+      const ctx = cropped.getContext('2d');
+      if (!ctx) throw new Error('无法创建取图画布');
+      ctx.drawImage(canvas, sx, sy, sw, sh, 0, 0, sw, sh);
+      const dataUrl = cropped.toDataURL('image/png');
+
+      // 取页面角落颜色作为覆盖色（适配非纯白背景）
+      let coverColor = '#ffffff';
+      const pageCtx = canvas.getContext('2d');
+      if (pageCtx) {
+        const point = pageCtx.getImageData(
+          Math.min(3, canvas.width - 1),
+          Math.min(3, canvas.height - 1),
+          1,
+          1
+        ).data;
+        if (point[3] > 128) {
+          coverColor =
+            '#' +
+            [point[0], point[1], point[2]]
+              .map(value => value.toString(16).padStart(2, '0'))
+              .join('');
+        }
+      }
+
+      const cover: EditOverlay = {
+        id: uid(),
+        pageUid: page.uid,
+        type: 'whiteout',
+        x: clamped.x,
+        y: clamped.y,
+        width: clamped.w,
+        height: clamped.h,
+        color: coverColor,
+        opacity: 1,
+      };
+      const image: EditOverlay = {
+        id: uid(),
+        pageUid: page.uid,
+        type: 'image',
+        x: clamped.x,
+        y: clamped.y,
+        width: clamped.w,
+        height: clamped.h,
+        dataUrl,
+        mime: 'image/png',
+        opacity: 1,
+        rotation: 0,
+        crop: { x: 0, y: 0, w: 1, h: 1 },
+        naturalWidth: sw,
+        naturalHeight: sh,
+        trueCrop: true,
+        fromPage: true,
+      };
+
+      addOverlays([cover, image]);
+      setSelectedId(image.id);
+      setTool('select');
+      setStatus('已取图：可点左上角剪刀或双击图片继续裁剪');
+    } catch (error: any) {
+      console.error('页面取图失败:', error);
+      setStatus('取图失败：' + (error?.message || '未知错误'));
+    } finally {
+      setExtracting(false);
+    }
+  }, [fileItem.pdfProxy, addOverlays]);
 
   const endEdit = useCallback(() => {
     const id = editingId;
@@ -1642,6 +1804,7 @@ export default function PdfEditor({ fileItem }: { fileItem: FileItem }) {
                 onConsumePendingImage={() => setPendingImage(null)}
                 onRequestCrop={setCropTargetId}
                 onRemoveOverlay={removeOverlay}
+                onExtractImage={rect => extractImageFromPage(page, rect)}
               />
             ))}
           </div>
@@ -1854,6 +2017,12 @@ export default function PdfEditor({ fileItem }: { fileItem: FileItem }) {
                         重置剪裁
                       </button>
                     </div>
+
+                    {selectedOverlay.fromPage && (
+                      <p className="text-[10px] leading-relaxed text-amber-600 dark:text-amber-400">
+                        来自「剪裁原图」页面取图，区域内文字已栅格化。
+                      </p>
+                    )}
 
                     <p className="text-[10px] leading-relaxed text-(--color-text-muted)">
                       拖动图片可移动，方向键微调位置；右下角手柄缩放，顶部圆形手柄旋转。
