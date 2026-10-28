@@ -253,7 +253,7 @@ export default function App() {
             <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse shrink-0"></span>
             永久免费 · 100% 本地处理
           </div>
-          <span className="text-[9px] opacity-75">文件不上传服务器 · 无账号 · 断网可用</span>
+          <span className="text-[9px] opacity-75">文件不上传服务器 · 无账号 · 无需注册</span>
         </div>
       </div>
 
@@ -299,7 +299,7 @@ export default function App() {
                 <ul className="mt-1.5 space-y-1 text-[11px] leading-relaxed text-emerald-800/80 dark:text-emerald-200/80">
                   <li>• 打开、编辑、合并、拆分、打印、转图全部在浏览器本地完成</li>
                   <li>• 无服务器上传、无账号、不收集任何文档内容</li>
-                  <li>• 断网也能用，合同、证件等敏感文件可放心处理</li>
+                  <li>• 无需上传，合同、证件等敏感文件可放心处理</li>
                 </ul>
               </div>
               <p className="mt-2.5 text-[11px] font-semibold text-emerald-600 dark:text-emerald-400">
