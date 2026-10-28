@@ -3,9 +3,9 @@ import clsx from 'clsx';
 import { saveAs } from 'file-saver';
 import { PDFDocument } from 'pdf-lib';
 import {
-  MousePointer2, Type, Image as ImageIcon, Highlighter, Square, Eraser,
+  MousePointer2, Type, Image as ImageIcon, Highlighter, Square, Eraser, Crop,
   Undo2, Redo2, Download, ZoomIn, ZoomOut, RotateCw, RotateCcw, Trash2,
-  ArrowUp, ArrowDown, Plus, Loader2, Bold, FileText, Layers, CheckCircle,
+  ArrowUp, ArrowDown, Plus, Loader2, Bold, FileText, Layers, CheckCircle, X,
 } from 'lucide-react';
 import { FileItem } from '../App';
 import { renderPageToCanvas } from '../lib/pdf-utils';
@@ -13,13 +13,19 @@ import {
   createDefaultState, displaySize, exportEditedPdf, measureTextBlock,
   renderTextToCanvas, fontString,
   type EditPage, type EditOverlay, type EditorState, type OverlayType,
-  type WatermarkConfig, type PageNumberConfig,
+  type WatermarkConfig, type PageNumberConfig, type CropRect,
 } from '../lib/pdf-editor';
 
 /* --------------------------------- 基础工具 -------------------------------- */
 
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
 const uid = () => Math.random().toString(36).slice(2, 10);
+const normalizeAngle = (value: number) => {
+  let angle = value % 360;
+  if (angle > 180) angle -= 360;
+  if (angle <= -180) angle += 360;
+  return angle;
+};
 
 type Tool = 'select' | OverlayType;
 
@@ -167,6 +173,42 @@ function TextBlockCanvas({
   );
 }
 
+/* --------------------------------- 图片渲染 -------------------------------- */
+
+function ImageOverlayView({ overlay }: { overlay: EditOverlay }) {
+  const crop = overlay.crop ?? { x: 0, y: 0, w: 1, h: 1 };
+  const rotation = overlay.rotation ?? 0;
+
+  return (
+    <div
+      className="w-full h-full pointer-events-none"
+      style={{
+        transform: 'rotate(' + rotation + 'deg)',
+        transformOrigin: 'center',
+        opacity: overlay.opacity ?? 1,
+      }}
+    >
+      <div className="relative w-full h-full overflow-hidden">
+        <img
+          src={overlay.dataUrl}
+          alt=""
+          draggable={false}
+          style={{
+            position: 'absolute',
+            left: -(crop.x / crop.w) * 100 + '%',
+            top: -(crop.y / crop.h) * 100 + '%',
+            width: 100 / crop.w + '%',
+            height: 100 / crop.h + '%',
+            objectFit: 'fill',
+            maxWidth: 'none',
+            display: 'block',
+          }}
+        />
+      </div>
+    </div>
+  );
+}
+
 /* ------------------------------- 行内文字编辑 ------------------------------- */
 
 function InlineTextEditor({
@@ -211,12 +253,221 @@ function InlineTextEditor({
   );
 }
 
+/* --------------------------------- 裁剪弹窗 -------------------------------- */
+
+type CropMode = 'move' | 'nw' | 'ne' | 'sw' | 'se';
+
+function CropDialog({
+  overlay,
+  onCancel,
+  onApply,
+}: {
+  overlay: EditOverlay;
+  onCancel: () => void;
+  onApply: (crop: CropRect) => void;
+}) {
+  const [crop, setCrop] = useState<CropRect>(overlay.crop ?? { x: 0, y: 0, w: 1, h: 1 });
+  const [natural, setNatural] = useState({ width: 0, height: 0 });
+  const containerRef = useRef<HTMLDivElement>(null);
+  const dragRef = useRef<{
+    mode: CropMode;
+    startX: number;
+    startY: number;
+    origin: CropRect;
+  } | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    const image = new Image();
+    image.onload = () => {
+      if (active) setNatural({ width: image.naturalWidth || 1, height: image.naturalHeight || 1 });
+    };
+    image.src = overlay.dataUrl || '';
+    return () => {
+      active = false;
+    };
+  }, [overlay.dataUrl]);
+
+  const MAX_WIDTH = 620;
+  const MAX_HEIGHT = 430;
+  const scale =
+    natural.width > 0
+      ? Math.min(MAX_WIDTH / natural.width, MAX_HEIGHT / natural.height)
+      : 0;
+  const displayWidth = Math.max(140, Math.round(natural.width * scale));
+  const displayHeight = Math.max(100, Math.round(natural.height * scale));
+
+  const pointFromEvent = (event: React.PointerEvent) => {
+    const rect = containerRef.current?.getBoundingClientRect();
+    if (!rect || !rect.width || !rect.height) return { x: 0, y: 0 };
+    return {
+      x: clamp((event.clientX - rect.left) / rect.width, 0, 1),
+      y: clamp((event.clientY - rect.top) / rect.height, 0, 1),
+    };
+  };
+
+  const begin = (event: React.PointerEvent, mode: CropMode) => {
+    event.stopPropagation();
+    event.preventDefault();
+    dragRef.current = {
+      mode,
+      startX: pointFromEvent(event).x,
+      startY: pointFromEvent(event).y,
+      origin: crop,
+    };
+    try {
+      containerRef.current?.setPointerCapture(event.pointerId);
+    } catch (error) {
+      /* ignore */
+    }
+  };
+
+  const move = (event: React.PointerEvent) => {
+    const drag = dragRef.current;
+    if (!drag) return;
+    const point = pointFromEvent(event);
+    const dx = point.x - drag.startX;
+    const dy = point.y - drag.startY;
+    const origin = drag.origin;
+    const MIN = 0.06;
+
+    if (drag.mode === 'move') {
+      setCrop({
+        x: clamp(origin.x + dx, 0, 1 - origin.w),
+        y: clamp(origin.y + dy, 0, 1 - origin.h),
+        w: origin.w,
+        h: origin.h,
+      });
+      return;
+    }
+
+    let left = origin.x;
+    let top = origin.y;
+    let right = origin.x + origin.w;
+    let bottom = origin.y + origin.h;
+
+    if (drag.mode.includes('w')) left = clamp(origin.x + dx, 0, right - MIN);
+    if (drag.mode.includes('e')) right = clamp(origin.x + origin.w + dx, left + MIN, 1);
+    if (drag.mode.includes('n')) top = clamp(origin.y + dy, 0, bottom - MIN);
+    if (drag.mode.includes('s')) bottom = clamp(origin.y + origin.h + dy, top + MIN, 1);
+
+    setCrop({ x: left, y: top, w: right - left, h: bottom - top });
+  };
+
+  const end = (event: React.PointerEvent) => {
+    dragRef.current = null;
+    try {
+      containerRef.current?.releasePointerCapture(event.pointerId);
+    } catch (error) {
+      /* ignore */
+    }
+  };
+
+  const handles: { mode: CropMode; style: React.CSSProperties }[] = [
+    { mode: 'nw', style: { left: -6, top: -6, cursor: 'nwse-resize' } },
+    { mode: 'ne', style: { right: -6, top: -6, cursor: 'nesw-resize' } },
+    { mode: 'sw', style: { left: -6, bottom: -6, cursor: 'nesw-resize' } },
+    { mode: 'se', style: { right: -6, bottom: -6, cursor: 'nwse-resize' } },
+  ];
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-6">
+      <div className="bg-(--color-panel) border border-(--color-border-subtle) rounded-xl shadow-2xl p-4 max-w-[95vw]">
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-sm font-bold text-(--color-text-main) flex items-center gap-2">
+            <Crop className="w-4 h-4 text-blue-500" /> 剪裁图片
+          </h3>
+          <button
+            onClick={onCancel}
+            className="p-1 rounded hover:bg-(--color-bg-hover) text-(--color-text-muted) cursor-pointer"
+            title="关闭"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        <div
+          ref={containerRef}
+          className="relative mx-auto bg-black/5 overflow-hidden rounded-md select-none touch-none"
+          style={{ width: displayWidth, height: displayHeight }}
+          onPointerMove={move}
+          onPointerUp={end}
+          onPointerCancel={end}
+        >
+          <img
+            src={overlay.dataUrl}
+            alt=""
+            draggable={false}
+            className="absolute inset-0 w-full h-full pointer-events-none"
+            style={{ objectFit: 'fill' }}
+          />
+          <div
+            className="absolute border-2 border-blue-500"
+            style={{
+              left: crop.x * 100 + '%',
+              top: crop.y * 100 + '%',
+              width: crop.w * 100 + '%',
+              height: crop.h * 100 + '%',
+              boxShadow: '0 0 0 9999px rgba(0,0,0,0.55)',
+              cursor: 'move',
+            }}
+            onPointerDown={event => begin(event, 'move')}
+          >
+            {handles.map(handle => (
+              <div
+                key={handle.mode}
+                onPointerDown={event => begin(event, handle.mode)}
+                className="absolute w-3 h-3 bg-white border-2 border-blue-500 rounded-sm"
+                style={handle.style}
+              />
+            ))}
+          </div>
+        </div>
+
+        <div className="flex items-center justify-between gap-4 mt-4">
+          <span className="text-[11px] text-(--color-text-muted)">
+            拖动框内移动，拖动四角调整裁剪范围
+          </span>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setCrop({ x: 0, y: 0, w: 1, h: 1 })}
+              className="px-2.5 py-1.5 text-[11px] font-semibold rounded-md border border-(--color-border-subtle) text-(--color-text-muted) hover:bg-(--color-bg-hover) cursor-pointer"
+            >
+              重置
+            </button>
+            <button
+              onClick={onCancel}
+              className="px-2.5 py-1.5 text-[11px] font-semibold rounded-md border border-(--color-border-subtle) text-(--color-text-main) hover:bg-(--color-bg-hover) cursor-pointer"
+            >
+              取消
+            </button>
+            <button
+              onClick={() => onApply(crop)}
+              className="px-3 py-1.5 text-[11px] font-semibold rounded-md bg-blue-600 hover:bg-blue-700 text-white shadow-sm cursor-pointer"
+            >
+              应用裁剪
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* --------------------------------- 单页卡片 -------------------------------- */
 
 type DragState =
   | { kind: 'create'; id: string; start: { x: number; y: number } }
   | { kind: 'move'; id: string; start: { x: number; y: number }; originX: number; originY: number }
-  | { kind: 'resize'; id: string; start: { x: number; y: number }; originX: number; originY: number };
+  | { kind: 'resize'; id: string; start: { x: number; y: number }; originX: number; originY: number }
+  | {
+      kind: 'rotate';
+      id: string;
+      startAngle: number;
+      originRotation: number;
+      centerX: number;
+      centerY: number;
+    };
 
 function PageCard({
   page, index, total, zoom, dpr, pdfProxy, tool, overlays,
@@ -344,6 +595,10 @@ function PageCard({
         dataUrl: pendingImage.dataUrl,
         mime: pendingImage.mime,
         opacity: 1,
+        rotation: 0,
+        crop: { x: 0, y: 0, w: 1, h: 1 },
+        naturalWidth: pendingImage.width,
+        naturalHeight: pendingImage.height,
       });
       onSelectOverlay(id);
       onConsumePendingImage();
@@ -374,6 +629,25 @@ function PageCard({
     const point = pointFromEvent(event);
     const overlay = overlays.find(item => item.id === drag.id);
     if (!overlay) return;
+
+    if (drag.kind === 'rotate') {
+      const rect = pageRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      const angle =
+        (Math.atan2(
+          event.clientY - rect.top - drag.centerY,
+          event.clientX - rect.left - drag.centerX
+        ) *
+          180) /
+        Math.PI;
+      let rotation = drag.originRotation + (angle - drag.startAngle);
+      rotation = normalizeAngle(rotation);
+      const step = event.shiftKey ? 15 : 90;
+      const snapped = Math.round(rotation / step) * step;
+      if (Math.abs(rotation - snapped) <= (event.shiftKey ? 2 : 4)) rotation = snapped;
+      onUpdateOverlay(drag.id, { rotation });
+      return;
+    }
 
     if (drag.kind === 'create') {
       onUpdateOverlay(drag.id, {
@@ -442,6 +716,29 @@ function PageCard({
       start: pointFromEvent(event),
       originX: overlay.x,
       originY: overlay.y,
+    };
+    capture(event);
+  };
+
+  const handleRotatePointerDown = (event: React.PointerEvent, overlay: EditOverlay) => {
+    event.stopPropagation();
+    const rect = pageRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const centerX = (overlay.x + overlay.width / 2) * rect.width;
+    const centerY = (overlay.y + overlay.height / 2) * rect.height;
+    const angle =
+      (Math.atan2(event.clientY - rect.top - centerY, event.clientX - rect.left - centerX) * 180) /
+      Math.PI;
+    onActivate();
+    onSelectOverlay(overlay.id);
+    onGestureStart();
+    dragRef.current = {
+      kind: 'rotate',
+      id: overlay.id,
+      startAngle: angle,
+      originRotation: overlay.rotation ?? 0,
+      centerX,
+      centerY,
     };
     capture(event);
   };
@@ -581,13 +878,7 @@ function PageCard({
                 ))}
 
               {overlay.type === 'image' && overlay.dataUrl && (
-                <img
-                  src={overlay.dataUrl}
-                  alt=""
-                  draggable={false}
-                  className="block w-full h-full select-none pointer-events-none"
-                  style={{ opacity: overlay.opacity ?? 1, objectFit: 'fill' }}
-                />
+                <ImageOverlayView overlay={overlay} />
               )}
 
               {(overlay.type === 'highlight' || overlay.type === 'whiteout' || overlay.type === 'rect') && (
@@ -606,6 +897,16 @@ function PageCard({
                         }
                   }
                 />
+              )}
+
+              {isSelected && tool === 'select' && !isEditing && overlay.type === 'image' && (
+                <div
+                  onPointerDown={event => handleRotatePointerDown(event, overlay)}
+                  className="absolute left-1/2 -top-7 -translate-x-1/2 w-6 h-6 rounded-full bg-white border-2 border-blue-500 flex items-center justify-center cursor-grab shadow-sm"
+                  title="拖动旋转（按住 Shift 以 15° 吸附）"
+                >
+                  <RotateCw className="w-3 h-3 text-blue-600" />
+                </div>
               )}
 
               {isSelected && tool === 'select' && !isEditing && (
@@ -705,6 +1006,7 @@ export default function PdfEditor({ fileItem }: { fileItem: FileItem }) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [pendingImage, setPendingImage] = useState<PendingImage | null>(null);
+  const [cropTargetId, setCropTargetId] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
   const [progress, setProgress] = useState(0);
   const [status, setStatus] = useState('');
@@ -838,6 +1140,33 @@ export default function PdfEditor({ fileItem }: { fileItem: FileItem }) {
     }));
     setSelectedId(null);
     setEditingId(null);
+    setCropTargetId(current => (current === id ? null : current));
+  }, [apply]);
+
+  const applyCrop = useCallback((id: string, crop: CropRect) => {
+    apply(current => {
+      const overlay = current.overlays.find(item => item.id === id);
+      if (!overlay) return current;
+      const page = current.pages.find(item => item.uid === overlay.pageUid);
+      const next: EditOverlay = { ...overlay, crop };
+
+      // 裁剪后保持裁剪结果的原始宽高比，避免图片被拉伸
+      if (page && overlay.naturalWidth && overlay.naturalHeight) {
+        const dims = displaySize(page);
+        const widthPts = overlay.width * dims.width;
+        const croppedAspect =
+          (overlay.naturalWidth * crop.w) / (overlay.naturalHeight * crop.h);
+        const heightPts = widthPts / croppedAspect;
+        next.height = Math.min(0.98, heightPts / dims.height);
+        next.y = Math.min(overlay.y, Math.max(0, 1 - next.height));
+      }
+
+      return {
+        ...current,
+        overlays: current.overlays.map(item => (item.id === id ? next : item)),
+      };
+    });
+    setCropTargetId(null);
   }, [apply]);
 
   const endEdit = useCallback(() => {
@@ -936,6 +1265,25 @@ export default function PdfEditor({ fileItem }: { fileItem: FileItem }) {
         removeOverlay(selectedId);
         return;
       }
+      if (
+        selectedId &&
+        !typing &&
+        ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)
+      ) {
+        const overlay = stateRef.current.overlays.find(item => item.id === selectedId);
+        if (overlay) {
+          event.preventDefault();
+          const step = event.shiftKey ? 0.02 : 0.004;
+          const deltaX = event.key === 'ArrowLeft' ? -step : event.key === 'ArrowRight' ? step : 0;
+          const deltaY = event.key === 'ArrowUp' ? -step : event.key === 'ArrowDown' ? step : 0;
+          updateOverlay(overlay.id, {
+            x: clamp(overlay.x + deltaX, 0, 1 - overlay.width),
+            y: clamp(overlay.y + deltaY, 0, 1 - overlay.height),
+          });
+        }
+        return;
+      }
+
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'z' && !typing) {
         event.preventDefault();
         if (event.shiftKey) redo();
@@ -943,6 +1291,10 @@ export default function PdfEditor({ fileItem }: { fileItem: FileItem }) {
         return;
       }
       if (event.key === 'Escape') {
+        if (cropTargetId) {
+          setCropTargetId(null);
+          return;
+        }
         setSelectedId(null);
         setEditingId(null);
         setTool('select');
@@ -951,7 +1303,7 @@ export default function PdfEditor({ fileItem }: { fileItem: FileItem }) {
     };
     window.addEventListener('keydown', handleKey);
     return () => window.removeEventListener('keydown', handleKey);
-  }, [selectedId, removeOverlay, redo, undo]);
+  }, [selectedId, removeOverlay, redo, undo, updateOverlay, cropTargetId]);
 
   // 图片读取
   const handleImageFile = async (file: File | undefined | null) => {
@@ -1027,6 +1379,7 @@ export default function PdfEditor({ fileItem }: { fileItem: FileItem }) {
   };
 
   const selectedOverlay = state.overlays.find(item => item.id === selectedId) || null;
+  const cropTarget = state.overlays.find(item => item.id === cropTargetId) || null;
   const activePage = state.pages.find(page => page.uid === activePageUid) || state.pages[0] || null;
   const activePageIndex = activePage ? state.pages.findIndex(page => page.uid === activePage.uid) : -1;
 
@@ -1330,6 +1683,88 @@ export default function PdfEditor({ fileItem }: { fileItem: FileItem }) {
                     />
                   </div>
                 )}
+
+                {selectedOverlay.type === 'image' && (
+                  <div className="space-y-2 pt-2 border-t border-(--color-border-subtle)">
+                    <div className="flex items-center gap-2">
+                      <label className="text-[11px] text-(--color-text-muted) w-12 shrink-0">旋转</label>
+                      <input
+                        type="number"
+                        min={-180}
+                        max={180}
+                        value={Math.round(selectedOverlay.rotation ?? 0)}
+                        onChange={event =>
+                          updateOverlay(selectedOverlay.id, {
+                            rotation: normalizeAngle(parseInt(event.target.value, 10) || 0),
+                          })
+                        }
+                        className="flex-1 p-1.5 text-xs rounded-md border border-(--color-border-subtle) bg-(--color-panel) text-(--color-text-main) outline-none focus:border-blue-500"
+                      />
+                      <span className="text-[10px] text-(--color-text-muted)">°</span>
+                    </div>
+
+                    <div className="flex gap-1.5">
+                      <button
+                        onClick={() =>
+                          updateOverlay(selectedOverlay.id, {
+                            rotation: normalizeAngle((selectedOverlay.rotation ?? 0) - 90),
+                          })
+                        }
+                        className={clsx(PANEL_BTN, 'flex-1')}
+                        title="逆时针旋转 90°"
+                      >
+                        <RotateCcw className="w-3.5 h-3.5" /> -90°
+                      </button>
+                      <button
+                        onClick={() =>
+                          updateOverlay(selectedOverlay.id, {
+                            rotation: normalizeAngle((selectedOverlay.rotation ?? 0) + 90),
+                          })
+                        }
+                        className={clsx(PANEL_BTN, 'flex-1')}
+                        title="顺时针旋转 90°"
+                      >
+                        <RotateCw className="w-3.5 h-3.5" /> +90°
+                      </button>
+                      <button
+                        onClick={() => updateOverlay(selectedOverlay.id, { rotation: 0 })}
+                        className={clsx(PANEL_BTN, 'flex-1')}
+                        title="重置旋转"
+                      >
+                        重置
+                      </button>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-1.5">
+                      <button
+                        onClick={() => setCropTargetId(selectedOverlay.id)}
+                        className={PANEL_BTN}
+                      >
+                        <Crop className="w-3.5 h-3.5" /> 剪裁
+                      </button>
+                      <button
+                        onClick={() =>
+                          updateOverlay(selectedOverlay.id, { crop: { x: 0, y: 0, w: 1, h: 1 } })
+                        }
+                        className={PANEL_BTN}
+                        disabled={
+                          !selectedOverlay.crop ||
+                          (selectedOverlay.crop.x <= 0.001 &&
+                            selectedOverlay.crop.y <= 0.001 &&
+                            selectedOverlay.crop.w >= 0.999 &&
+                            selectedOverlay.crop.h >= 0.999)
+                        }
+                        title="恢复完整图片"
+                      >
+                        重置剪裁
+                      </button>
+                    </div>
+
+                    <p className="text-[10px] leading-relaxed text-(--color-text-muted)">
+                      拖动图片可移动，方向键微调位置；右下角手柄缩放，顶部圆形手柄旋转。
+                    </p>
+                  </div>
+                )}
               </div>
             )}
           </section>
@@ -1547,6 +1982,14 @@ export default function PdfEditor({ fileItem }: { fileItem: FileItem }) {
           event.target.value = '';
         }}
       />
+
+      {cropTarget && (
+        <CropDialog
+          overlay={cropTarget}
+          onCancel={() => setCropTargetId(null)}
+          onApply={crop => applyCrop(cropTarget.id, crop)}
+        />
+      )}
     </div>
   );
 }

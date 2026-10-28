@@ -13,6 +13,13 @@ export interface EditPage {
   height: number;          // MediaBox 高（未旋转）
 }
 
+export interface CropRect {
+  x: number; // 相对原图的归一化裁剪区域（左上原点）
+  y: number;
+  w: number;
+  h: number;
+}
+
 export interface EditOverlay {
   id: string;
   pageUid: string;
@@ -29,6 +36,11 @@ export interface EditOverlay {
   strokeWidth?: number;    // pt
   dataUrl?: string;
   mime?: string;
+  // 图片专用
+  rotation?: number;       // 屏幕方向顺时针角度（-180 ~ 180）
+  crop?: CropRect;
+  naturalWidth?: number;
+  naturalHeight?: number;
 }
 
 export interface WatermarkConfig {
@@ -257,14 +269,55 @@ export async function exportEditedPdf(
   const out = await PDFDocument.create();
   const imageCache = new Map<string, PDFImage>();
 
-  const embedOverlayImage = async (overlay: EditOverlay) => {
-    const cached = imageCache.get(overlay.id);
+  const embedImage = async (key: string, dataUrl: string, mime: string) => {
+    const cached = imageCache.get(key);
     if (cached) return cached;
-    const bytes = dataUrlToBytes(overlay.dataUrl || '');
-    const mime = overlay.mime || '';
+    const bytes = dataUrlToBytes(dataUrl);
     const image = /jpe?g/i.test(mime) ? await out.embedJpg(bytes) : await out.embedPng(bytes);
-    imageCache.set(overlay.id, image);
+    imageCache.set(key, image);
     return image;
+  };
+
+  const loadImageElement = (dataUrl: string) =>
+    new Promise<HTMLImageElement>((resolve, reject) => {
+      const element = new Image();
+      element.onload = () => resolve(element);
+      element.onerror = () => reject(new Error('图片解码失败'));
+      element.src = dataUrl;
+    });
+
+  // 有裁剪时，先在本地按原图分辨率裁出一张新图再嵌入，避免质量损失与坐标误差
+  const buildImagePayload = async (overlay: EditOverlay) => {
+    const crop = overlay.crop;
+    const isFullCrop =
+      !crop ||
+      (crop.x <= 0.0001 && crop.y <= 0.0001 && crop.w >= 0.9999 && crop.h >= 0.9999);
+    if (isFullCrop) {
+      return { key: overlay.id, dataUrl: overlay.dataUrl || '', mime: overlay.mime || 'image/png' };
+    }
+    const element = await loadImageElement(overlay.dataUrl || '');
+    const naturalWidth = element.naturalWidth || 1;
+    const naturalHeight = element.naturalHeight || 1;
+    const sx = Math.round(crop.x * naturalWidth);
+    const sy = Math.round(crop.y * naturalHeight);
+    const sw = Math.max(1, Math.round(crop.w * naturalWidth));
+    const sh = Math.max(1, Math.round(crop.h * naturalHeight));
+
+    const canvas = document.createElement('canvas');
+    canvas.width = sw;
+    canvas.height = sh;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) throw new Error('无法创建图片裁剪画布');
+    ctx.drawImage(element, sx, sy, sw, sh, 0, 0, sw, sh);
+
+    return {
+      key:
+        overlay.id +
+        ':' +
+        [crop.x, crop.y, crop.w, crop.h].map(value => value.toFixed(4)).join(','),
+      dataUrl: canvas.toDataURL('image/png'),
+      mime: 'image/png',
+    };
   };
 
   const pages = state.pages;
@@ -331,20 +384,33 @@ export async function exportEditedPdf(
 
       if (overlay.type === 'image') {
         if (!overlay.dataUrl) continue;
-        const image = await embedOverlayImage(overlay);
-        const anchor = displayToPdf(
-          overlay.x * displayWidth,
-          (overlay.y + overlay.height) * displayHeight,
+        const payload = await buildImagePayload(overlay);
+        const image = await embedImage(payload.key, payload.dataUrl, payload.mime);
+
+        // 图片自身旋转（屏幕顺时针为正）叠加页面旋转：PDF 中逆时针为正，故取 rotation - imageRotation
+        const imageRotation = overlay.rotation ?? 0;
+        const pdfRotation = rotation - imageRotation;
+        const theta = (pdfRotation * Math.PI) / 180;
+        const cos = Math.cos(theta);
+        const sin = Math.sin(theta);
+
+        const center = displayToPdf(
+          (overlay.x + overlay.width / 2) * displayWidth,
+          (overlay.y + overlay.height / 2) * displayHeight,
           mediaWidth,
           mediaHeight,
           rotation
         );
+        // 以图片中心为旋转锚点
+        const anchorX = center.x - (boxWidth / 2) * cos + (boxHeight / 2) * sin;
+        const anchorY = center.y - (boxWidth / 2) * sin - (boxHeight / 2) * cos;
+
         outPage.drawImage(image, {
-          x: anchor.x,
-          y: anchor.y,
+          x: anchorX,
+          y: anchorY,
           width: boxWidth,
           height: boxHeight,
-          rotate: degrees(rotation),
+          rotate: degrees(pdfRotation),
           opacity: overlay.opacity ?? 1,
         });
         continue;
